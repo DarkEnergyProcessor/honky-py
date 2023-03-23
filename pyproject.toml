@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "honkypy"
+version = "0.1.0"
+authors = [
+  { name="Miku AuahDark", email="lumi.hotaru@gmail.com" },
+]
+description = "HonokaMiku/libhonoka implementation in Python"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/DarkEnergyProcessor/honkypy"
+"Bug Tracker" = "https://github.com/DarkEnergyProcessor/honkypy/issues"
