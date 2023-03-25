@@ -22,3 +22,6 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/DarkEnergyProcessor/honkypy"
 "Bug Tracker" = "https://github.com/DarkEnergyProcessor/honkypy/issues"
+
+[project.scripts]
+honkypy = "honkypy.__main__:main"

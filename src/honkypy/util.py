@@ -28,4 +28,4 @@ def calculate_md5(prefix: bytes, filename: bytes):
     basename = os.path.basename(filename)
     md5 = hashlib.md5(prefix, usedforsecurity=False)
     md5.update(basename)
-    return md5.digest(), len(basename)
+    return md5.digest(), basename

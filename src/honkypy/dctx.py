@@ -20,14 +20,47 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from typing import ClassVar
+import struct
+
+from typing import ClassVar, cast
 
 from .util import calculate_md5
 
 
+__all__ = [
+    "DecrypterContext",
+    "Version1Context",
+    "Version2Context",
+    "Version3Context",
+    "Version4Context",
+    "setup_v3",
+]
+
+
+class _KeyTables:
+    def __init__(self, a: int, c: int, s: int):
+        self.a = a
+        self.c = c
+        self.shift = s
+
+    def next(self, x: int):
+        return (x * self.a + self.c) & 0xFFFFFFFF
+
+
+_V4_LCG_PARAM = [
+    _KeyTables(1103515245, 12345, 15),
+    _KeyTables(22695477, 1, 23),
+    _KeyTables(214013, 2531011, 24),
+    _KeyTables(65793, 4282663, 8),
+]
+
+
 class DecrypterContext:
-    HEADER_SIZE: ClassVar[int] = 0
-    VERSION: ClassVar[int] = 0
+    # Contains the header size of this particular decrypter context.
+    HEADER_SIZE: ClassVar[int] = cast(int, 0)
+
+    # Contains the crypt version number for this context.
+    VERSION: ClassVar[int] = cast(int, 0)
 
     def decrypt_int(self, data: int) -> int:
         """Decrypt single byte represented as int.
@@ -74,9 +107,11 @@ class DecrypterContext:
 class Version1Context(DecrypterContext):
     VERSION: ClassVar[int] = 1
 
-    def __init__(self, prefix: bytes, filename: bytes, key_tables: list[int], header_test: bytes | None = None):
-        digest, filenamelen = calculate_md5(prefix, filename)
-        self.update_key = filenamelen + 1
+    def __init__(
+        self, prefix: bytes, filename: bytes, key_tables: list[int] | None = None, header_test: bytes | None = None
+    ):
+        digest, basename = calculate_md5(prefix, filename)
+        self.update_key = (len(basename) & 0x3F) + 1
         self.init_key = (digest[0] << 24) | (digest[1] << 16) | (digest[2] << 8) | digest[3]
         self.xor_key = self.init_key
         self.pos = 0
@@ -121,8 +156,10 @@ class Version2Context(DecrypterContext):
     HEADER_SIZE: ClassVar[int] = 4
     VERSION: ClassVar[int] = 2
 
-    def __init__(self, prefix: bytes, filename: bytes, key_tables: list[int], header_test: bytes | None = None):
-        digest, filenamelen = calculate_md5(prefix, filename)
+    def __init__(
+        self, prefix: bytes, filename: bytes, key_tables: list[int] | None = None, header_test: bytes | None = None
+    ):
+        digest, basename = calculate_md5(prefix, filename)
         if header_test is not None and digest[4:8] != header_test[:4]:
             raise ValueError("Version 2 header invalid")
         self.header = digest[4:8]
@@ -171,4 +208,167 @@ class Version2Context(DecrypterContext):
         e = (d - 0x7FFFFFFF) % 0x100000000
         f = e if e > 0x7FFFFFFE else d
         self.update_key = f
-        self.xor_key = ((b >> 23) & 0xFF) | ((b >> 7) & 0xFF00)
+        self.xor_key = ((f >> 23) & 0xFF) | ((f >> 7) & 0xFF00)
+
+    def emit_header(self) -> bytes:
+        return self.header
+
+
+class _V3Base(DecrypterContext):
+    HEADER_SIZE: ClassVar[int] = 16
+    pos: int
+    lcg: _KeyTables
+    init_key: int
+
+    def decrypt_int(self, data: int):
+        result = (data & 0xFF) ^ ((self.update_key >> (self.lcg.shift & 0x1F)) & 0xFF)
+        self.pos = self.pos + 1
+        self._step()
+        return result
+
+    def goto_offset(self, pos: int) -> None:
+        if self.pos >= pos:
+            loop = pos - self.pos
+        else:
+            self.update_key = self.init_key
+            loop = pos
+        for i in range(loop):
+            self._step()
+        self.pos = pos
+
+    def _step(self):
+        self.update_key = self.lcg.next(self.update_key)
+
+
+class Version3Context(_V3Base):
+    VERSION: ClassVar[int] = 3
+
+    def __init__(
+        self,
+        prefix: bytes,
+        md5digest: bytes,
+        basename: bytes,
+        key_tables: list[int],
+        enforce_ns: bool = True,
+        *,
+        flip: bool = False,
+        header_ns: int | None = None,
+    ):
+        if test_ns is not None and not enforce_ns:
+            self.name_sum = test_ns
+        else:
+            self.name_sum = sum(prefix) + sum(basename)
+
+        if test_ns is not None and (not enforce_ns) and test_ns != self.name_sum:
+            raise ValueError("Version 3 key index name mismatch")
+
+        self.lcg = _V4_LCG_PARAM[2]  # MSVC
+        self.init_key = key_tables[self.name_sum & 0x3F]
+        self.flipped = flip
+        if flip == 1:
+            self.init_key = (~self.init_key) & 0xFFFFFFFF
+        self.update_key = self.init_key
+        self.pos = 0
+        self.md5 = md5digest
+
+    def emit_header(self) -> bytes:
+        return bytes(
+            [
+                (~self.md5[4]) & 0xFF,
+                (~self.md5[5]) & 0xFF,
+                (~self.md5[6]) & 0xFF,
+                12,
+                0,
+                0,
+                0,
+                int(self.flipped),
+                (self.name_sum >> 24) & 0xFF,
+                (self.name_sum >> 16) & 0xFF,
+                (self.name_sum >> 8) & 0xFF,
+                self.name_sum & 0xFF,
+                0,
+                0,
+                0,
+                0,
+            ]
+        )
+
+
+class Version4Context(_V3Base):
+    VERSION: ClassVar[int] = 4
+
+    def __init__(
+        self,
+        md5hash: bytes,
+        lcg_index: int,
+    ):
+        self.lcg = _V4_LCG_PARAM[lcg_index]
+        self.lcg_index = lcg_index
+        self.init_key = (md5hash[8] << 24) | (md5hash[9] << 16) | (md5hash[10] << 8) | md5hash[11]
+        self.update_key = self.init_key
+        self.pos = 0
+        self.md5 = md5hash
+
+    def emit_header(self) -> bytes:
+        return bytes(
+            [
+                (~self.md5[4]) & 0xFF,
+                (~self.md5[5]) & 0xFF,
+                (~self.md5[6]) & 0xFF,
+                12,
+                0,
+                0,
+                self.lcg_index,
+                2,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ]
+        )
+
+
+def _test_v3(header: bytes | None, md5hash: bytes):
+    if header is not None and (
+        header[0] != (~md5hash[4] & 255) or header[1] != (~md5hash[5] & 255) or header[2] != (~md5hash[6] & 255)
+    ):
+        raise ValueError("Version 3 header invalid")
+
+
+def setup_v3(
+    prefix: bytes,
+    filename: bytes,
+    key_tables: list[int] | None = None,
+    header_test: bytes | None = None,
+    *,
+    version: int = 0,
+    flip_v3: bool = False,
+    lcg_key_v4: int = 0,
+    enforce_ns_v3: bool = True,
+):
+    digest, basename = calculate_md5(prefix, filename)
+    header_ns = None
+    if header_test is not None:
+        _test_v3(header_test, digest)
+        flip_v3 = header_test[7] == 1
+        if version == 0:
+            if header_test[7] < 2:
+                version = 3
+                header_ns = (header_test[10] << 8) | header_test[11]
+            if header_test[7] == 2:
+                version = 4
+                lcg_key_v4 = header_test[6]
+            else:
+                # TODO
+                raise NotImplementedError("V5 and later is currently not supported")
+    if version == 0:
+        raise ValueError("Cannot encrypt version 0")
+    if version == 3:
+        return Version3Context(prefix, digest, basename, key_tables, enforce_ns_v3, flip=flip_v3, header_ns=header_ns)
+    elif version == 4:
+        return Version4Context(digest, lcg_key_v4)
+    raise NotImplementedError("V5 and later is currently not supported")
