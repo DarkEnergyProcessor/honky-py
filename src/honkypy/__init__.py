@@ -52,14 +52,27 @@ _COMBINATION: list[tuple[_ValidGametypes, bytes, list[int]]] = [
     ("CN", NAME_PREFIX_CN, KEY_TABLES_CN),
 ]
 
-_GAME_VERSIONS: list[type[_SupportsDctxType]] = [Version1Context, Version2Context, setup_v3]
+_GAME_VERSIONS: list[type[_SupportsDctxType]] = [Version1Context, Version2Context, setup_v3, setup_v3]
 
-_GAME_VERSIONS_PROBE: list[type[_SupportsDctxType]] = [Version2Context, setup_v3]
+_GAME_VERSIONS_PROBE: list[type[_SupportsDctxType]] = [Version2Context, setup_v3, setup_v3]
 
 
 def decrypt_setup_probe(
     filename: str | bytes, header: bytes, *, version: int = 0
 ) -> tuple[DecrypterContext, _ValidGametypes]:
+    """Initialize decrypter using the best suitable options using the file header.
+
+    Args:
+        filename (str | bytes): Name of the file. The basename is used to derive the key.
+        header (bytes): First 16-byte of the file data.
+        version (int, optional): Specify decryption version, or 0 to automatically determine. Defaults to 0.
+
+    Raises:
+        ValueError: When there's no suitable decryption method.
+
+    Returns:
+        tuple[DecrypterContext, _ValidGametypes]: Newly decrypter context and the game type string.
+    """
     # Try all combination
     for gametype, prefix, key_tables in _COMBINATION:
         try:
@@ -77,6 +90,21 @@ def decrypt_setup(
     key_tables: list[int],
     version: int = 0,
 ) -> DecrypterContext:
+    """Initialize decrypter with specified parameters.
+
+    Args:
+        prefix (bytes): Game file prefix. Can be one of `NAME_PREFIX_*`
+        filename (str | bytes): Name of the file. The basename is used to derive the key.
+        header (bytes): First 16-byte of the file data.
+        key_tables (list[int]): Key tables with 64 elements used for V3 decryption. Can be one of `KEY_TABLES_*`.
+        version (int, optional): Specify decryption version, or 0 to automatically determine. Defaults to 0.
+
+    Raises:
+        ValueError: When header is less than 16-byte, no suitable decryption found, and version out of range.
+
+    Returns:
+        DecrypterContext: Newly decrypter context.
+    """
     if isinstance(filename, str):
         filename = filename.encode("UTF-8")
     if len(header) < 16:
@@ -90,7 +118,7 @@ def decrypt_setup(
                 pass
         raise ValueError("No suitable decryption game file found")
     elif version < 0 or version > len(_GAME_VERSIONS):
-        raise IndexError("Version out of range")
+        raise ValueError("Version out of range")
     else:
         context_class = _GAME_VERSIONS[version - 1]
         dctx = cast(DecrypterContext, context_class(prefix, filename, key_tables, header))
@@ -105,7 +133,23 @@ def encrypt_setup(
     v3_flip_key: bool = False,
     v3_key_tables: list[int] | None = None,
     v4_lcg_index: int = 0,
-):
+) -> DecrypterContext:
+    """Initialize decrypter context for encrypting.
+
+    Args:
+        prefix (bytes): Game file prefix. Can be one of `NAME_PREFIX_*`
+        filename (str | bytes): Name of the file. The basename is used to derive the key.
+        version (int): Specify decryption version.
+        v3_flip_key (bool, optional): Whetever to flip the initial key in V3. Defaults to False.
+        v3_key_tables (list[int] | None, optional): Key tables with 64 elements used for V3 decryption. Defaults to None.
+        v4_lcg_index (int, optional): Linear Congruential Generator key index for V4. Defaults to 0.
+
+    Raises:
+        ValueError: When version is 0, or when V3 is specified and no key tables is present.
+
+    Returns:
+        DecrypterContext: Newly decrypter context.
+    """
     if isinstance(filename, str):
         filename = filename.encode("UTF-8")
     if version < 0:
@@ -114,9 +158,12 @@ def encrypt_setup(
         return Version1Context(prefix, filename, [])
     elif version == 2:
         return Version2Context(prefix, filename, [])
-    elif version >= 3:
-        if version == 3 and v3_key_tables is None:
-            raise ValueError("V3 requires key tables")
+    else:
+        if v3_key_tables is None:
+            if version == 3:
+                raise ValueError("V3 requires key tables")
+            v3_key_tables = []
+        return setup_v3(prefix, filename, v3_key_tables, version=version, flip_v3=v3_flip_key, lcg_key_v4=v4_lcg_index)
 
 
 def encrypt_setup_by_gametype(
@@ -126,7 +173,22 @@ def encrypt_setup_by_gametype(
     *,
     v3_flip_key: bool = False,
     v4_lcg_index: int = 0,
-):
+) -> DecrypterContext:
+    """Initialize decrypter context for encrypting using gametype-specific data.
+
+    Args:
+        gametype (str): One of "JP", "WW", "TW", or "CN".
+        filename (str | bytes): Name of the file. The basename is used to derive the key.
+        version (int): Specify decryption version.
+        v3_flip_key (bool, optional): Whetever to flip the initial key in V3. Defaults to False.
+        v4_lcg_index (int, optional): Linear Congruential Generator key index for V4. Defaults to 0.
+
+    Raises:
+        ValueError: When the game type is invalid.
+
+    Returns:
+        DecrypterContext: Newly decrypter context.
+    """
     for gt, prefix, key_tables in _COMBINATION:
         if gametype == gt:
             return encrypt_setup(
