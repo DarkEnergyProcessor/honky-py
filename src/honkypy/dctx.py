@@ -20,11 +20,10 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import struct
+from .error import *
+from .util import calculate_md5
 
 from typing import ClassVar, cast
-
-from .util import calculate_md5
 
 
 __all__ = [
@@ -37,7 +36,7 @@ __all__ = [
 ]
 
 
-class _KeyTables:
+class _LCGKeys:
     def __init__(self, a: int, c: int, s: int):
         self.a = a
         self.c = c
@@ -48,10 +47,10 @@ class _KeyTables:
 
 
 _V4_LCG_PARAM = [
-    _KeyTables(1103515245, 12345, 15),
-    _KeyTables(22695477, 1, 23),
-    _KeyTables(214013, 2531011, 24),
-    _KeyTables(65793, 4282663, 8),
+    _LCGKeys(1103515245, 12345, 15),
+    _LCGKeys(22695477, 1, 23),
+    _LCGKeys(214013, 2531011, 24),
+    _LCGKeys(65793, 4282663, 8),
 ]
 
 
@@ -161,7 +160,7 @@ class Version2Context(DecrypterContext):
     ):
         digest, basename = calculate_md5(prefix, filename)
         if header_test is not None and digest[4:8] != header_test[:4]:
-            raise ValueError("Version 2 header invalid")
+            raise InvalidHeaderError("2")
         self.header = digest[4:8]
         self.init_key = ((digest[0] & 0x7F) << 24) | (digest[1] << 16) | (digest[2] << 8) | digest[3]
         self.xor_key = ((self.init_key >> 23) & 0xFF) | ((self.init_key >> 7) & 0xFF00)
@@ -217,7 +216,7 @@ class Version2Context(DecrypterContext):
 class _V3Base(DecrypterContext):
     HEADER_SIZE: ClassVar[int] = 16
     pos: int
-    lcg: _KeyTables
+    lcg: _LCGKeys
     init_key: int
 
     def decrypt_int(self, data: int):
@@ -254,13 +253,13 @@ class Version3Context(_V3Base):
         flip: bool = False,
         header_ns: int | None = None,
     ):
-        if test_ns is not None and not enforce_ns:
-            self.name_sum = test_ns
+        if header_ns is not None and not enforce_ns:
+            self.name_sum = header_ns
         else:
             self.name_sum = sum(prefix) + sum(basename)
 
-        if test_ns is not None and (not enforce_ns) and test_ns != self.name_sum:
-            raise ValueError("Version 3 key index name mismatch")
+        if header_ns is not None and (not enforce_ns) and header_ns != self.name_sum:
+            raise NameSumMismatchError()
 
         self.lcg = _V4_LCG_PARAM[2]  # MSVC
         self.init_key = key_tables[self.name_sum & 0x3F]
@@ -333,10 +332,11 @@ class Version4Context(_V3Base):
 
 
 def _test_v3(header: bytes | None, md5hash: bytes):
-    if header is not None and (
-        header[0] != (~md5hash[4] & 255) or header[1] != (~md5hash[5] & 255) or header[2] != (~md5hash[6] & 255)
-    ):
-        raise ValueError("Version 3 header invalid")
+    if header is not None:
+        if len(header) < 16:
+            raise InsufficientHeaderDataError()
+        elif header[0] != (~md5hash[4] & 255) or header[1] != (~md5hash[5] & 255) or header[2] != (~md5hash[6] & 255):
+            raise InvalidHeaderError("3+")
 
 
 def setup_v3(
@@ -350,12 +350,33 @@ def setup_v3(
     lcg_key_v4: int = 0,
     enforce_ns_v3: bool = True,
 ):
+    """Routine for encrypt/decryption setup for Version 3+ game files.
+
+    Args:
+        prefix (bytes): Game file prefix. Can be one of `NAME_PREFIX_*`
+        filename (bytes): Name of the file. The basename is used to derive the key.
+        key_tables (list[int] | None, optional): Key tables with 64 elements used for V3 decryption. Can be one of `KEY_TABLES_*`. Defaults to None.
+        header_test (bytes | None, optional): When decrypting, first 16 bytes of the file contents. Defaults to None which means encryption is assumed.
+        version (int, optional): Decrypt/encrypt version. Must be 0 or at least 3 or more. Defaults to 0.
+        flip_v3 (bool, optional): Whetever to flip the initial key in V3. Defaults to False.
+        lcg_key_v4 (int, optional): Linear Congruential Generator key index for V4. Defaults to 0.
+        enforce_ns_v3 (bool, optional): Perform strict name-sum checking in V3 header. Defaults to True.
+
+    Raises:
+        VersionOutOfRange: _description_
+        VersionUnsupported: _description_
+        KeyTablesMissingError: _description_
+        VersionOutOfRange: _description_
+
+    Returns:
+        _type_: _description_
+    """
     digest, basename = calculate_md5(prefix, filename)
     header_ns = None
     if header_test is not None:
         _test_v3(header_test, digest)
         flip_v3 = header_test[7] == 1
-        if version == 0:
+        if version <= 0:
             if header_test[7] < 2:
                 version = 3
                 header_ns = (header_test[10] << 8) | header_test[11]
@@ -364,11 +385,15 @@ def setup_v3(
                 lcg_key_v4 = header_test[6]
             else:
                 # TODO
-                raise NotImplementedError("V5 and later is currently not supported")
-    if version == 0:
-        raise ValueError("Cannot encrypt version 0")
+                raise VersionUnsupported("5+")
+        elif version < 3:
+            raise VersionOutOfRange()
+    if version <= 0:
+        raise VersionOutOfRange()
     if version == 3:
+        if key_tables is None:
+            raise KeyTablesMissingError()
         return Version3Context(prefix, digest, basename, key_tables, enforce_ns_v3, flip=flip_v3, header_ns=header_ns)
     elif version == 4:
         return Version4Context(digest, lcg_key_v4)
-    raise NotImplementedError("V5 and later is currently not supported")
+    raise VersionOutOfRange()

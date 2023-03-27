@@ -29,6 +29,7 @@ routines written in pure Python.
 
 
 from .dctx import DecrypterContext, Version1Context, Version2Context, setup_v3
+from .error import *
 from .key_tables import *
 
 from typing import Callable, Literal, cast
@@ -68,7 +69,7 @@ def decrypt_setup_probe(
         version (int, optional): Specify decryption version, or 0 to automatically determine. Defaults to 0.
 
     Raises:
-        ValueError: When there's no suitable decryption method.
+        NoSuitableModeError: When there's no suitable decryption method.
 
     Returns:
         tuple[DecrypterContext, _ValidGametypes]: Newly decrypter context and the game type string.
@@ -80,7 +81,7 @@ def decrypt_setup_probe(
             return dctx, gametype
         except ValueError:
             pass
-    raise ValueError("No suitable decryption mode found")
+    raise NoSuitableModeError()
 
 
 def decrypt_setup(
@@ -100,7 +101,9 @@ def decrypt_setup(
         version (int, optional): Specify decryption version, or 0 to automatically determine. Defaults to 0.
 
     Raises:
-        ValueError: When header is less than 16-byte, no suitable decryption found, and version out of range.
+        InsufficientHeaderDataError: When header data passed is less than 16 byte.
+        NoSuitableModeError: When there's no suitable decryption method.
+        VersionOutOfRange: When the version specified is out-of-range.
 
     Returns:
         DecrypterContext: Newly decrypter context.
@@ -108,7 +111,7 @@ def decrypt_setup(
     if isinstance(filename, str):
         filename = filename.encode("UTF-8")
     if len(header) < 16:
-        raise ValueError("Insufficient header data (need at least 16 bytes)")
+        raise InsufficientHeaderDataError()
     if version == 0:
         for context_class in _GAME_VERSIONS_PROBE:
             try:
@@ -116,9 +119,9 @@ def decrypt_setup(
                 return dctx
             except ValueError:
                 pass
-        raise ValueError("No suitable decryption game file found")
+        raise NoSuitableModeError()
     elif version < 0 or version > len(_GAME_VERSIONS):
-        raise ValueError("Version out of range")
+        raise VersionOutOfRange()
     else:
         context_class = _GAME_VERSIONS[version - 1]
         dctx = cast(DecrypterContext, context_class(prefix, filename, key_tables, header))
@@ -145,7 +148,8 @@ def encrypt_setup(
         v4_lcg_index (int, optional): Linear Congruential Generator key index for V4. Defaults to 0.
 
     Raises:
-        ValueError: When version is 0, or when V3 is specified and no key tables is present.
+        VersionOutOfRange: When version is out-of-range.
+        KeyTablesMissingError: When version is 3 and `v3_key_tables` is `None`.
 
     Returns:
         DecrypterContext: Newly decrypter context.
@@ -153,7 +157,7 @@ def encrypt_setup(
     if isinstance(filename, str):
         filename = filename.encode("UTF-8")
     if version < 0:
-        raise ValueError("Cannot encrypt version 0")
+        raise VersionOutOfRange()
     if version == 1:
         return Version1Context(prefix, filename, [])
     elif version == 2:
@@ -161,7 +165,7 @@ def encrypt_setup(
     else:
         if v3_key_tables is None:
             if version == 3:
-                raise ValueError("V3 requires key tables")
+                raise KeyTablesMissingError()
             v3_key_tables = []
         return setup_v3(prefix, filename, v3_key_tables, version=version, flip_v3=v3_flip_key, lcg_key_v4=v4_lcg_index)
 
@@ -184,7 +188,7 @@ def encrypt_setup_by_gametype(
         v4_lcg_index (int, optional): Linear Congruential Generator key index for V4. Defaults to 0.
 
     Raises:
-        ValueError: When the game type is invalid.
+        InvalidGameType: When the game type is invalid.
 
     Returns:
         DecrypterContext: Newly decrypter context.
@@ -194,4 +198,4 @@ def encrypt_setup_by_gametype(
             return encrypt_setup(
                 prefix, filename, version, v3_flip_key=v3_flip_key, v3_key_tables=key_tables, v4_lcg_index=v4_lcg_index
             )
-    raise ValueError(f"Invalid game type'{gametype}'")
+    raise InvalidGameType(gametype)
