@@ -27,12 +27,13 @@ This module provides "a certain idol rhythm game" file encryption and decryption
 routines written in pure Python.
 """
 
+import io
 
 from .dctx import DecrypterContext, Version1Context, Version2Context, setup_v3
 from .error import *
 from .key_tables import *
 
-from typing import Callable, Literal, cast
+from typing import Callable, Literal, IO, cast
 
 
 _SupportsDctxType = Callable[[bytes, bytes, list[int] | None, bytes | None], DecrypterContext]
@@ -199,3 +200,93 @@ def encrypt_setup_by_gametype(
                 prefix, filename, version, v3_flip_key=v3_flip_key, v3_key_tables=key_tables, v4_lcg_index=v4_lcg_index
             )
     raise InvalidGameType(gametype)
+
+
+class StreamIOWrapper(IO[bytes]):
+    """Wrap IO bytes through DecrypterContext."""
+
+    def __init__(self, stream: IO[bytes], dctx: DecrypterContext, write_header: bool = False):
+        """
+        Args:
+            stream (IO[bytes]): Bytes IO stream.
+            dctx (DecrypterContext): Decrypter context.
+            write_header (bool, optional): When encrypting, set this to true to write header automatically just when opening for writing. Defaults to False.
+        """
+        self._stream = stream
+        self._dctx = dctx
+
+        if write_header:
+            stream.write(dctx.emit_header())
+            dctx.goto_offset(0)
+
+    @property
+    def mode(self) -> str:
+        return self._stream.mode
+
+    @property
+    def name(self) -> str:
+        return self._stream.name
+
+    def close(self):
+        self._stream.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._stream.closed
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    def flush(self):
+        self._stream.flush()
+
+    def isatty(self):
+        return self._stream.isatty()
+
+    def read(self, n: int = -1) -> bytes:
+        data = self._stream.read(n)
+        return self._dctx.decrypt_block(data)
+
+    def readable(self) -> bool:
+        return self._stream.readable()
+
+    def readline(self, limit: int = -1) -> bytes:
+        data = self._stream.readline(limit)
+        return self._dctx.decrypt_block(data)
+
+    def readlines(self, hint: int = -1) -> list[bytes]:
+        data = self._stream.readlines(hint)
+        return [self._dctx.decrypt_block(d) for d in data]
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if whence == io.SEEK_SET:
+            offset = offset + self._dctx.HEADER_SIZE
+        result = self._stream.seek(offset, whence) - self._dctx.HEADER_SIZE
+        self._dctx.goto_offset(result)
+        return result
+
+    def seekable(self) -> bool:
+        return self._stream.seekable()
+
+    def tell(self) -> int:
+        return self._stream.tell() - self._dctx.HEADER_SIZE
+
+    def truncate(self, size: int | None = None) -> int:
+        raise NotImplementedError("Should it truncate to exact size or size + header?")
+        return 0
+
+    def writable(self) -> bool:
+        return self._stream.writable()
+
+    def write(self, s: bytes) -> int:
+        return self._stream.write(self._dctx.decrypt_block(s))
+
+    def writelines(self, lines: list[bytes]) -> None:
+        self._stream.writelines(self._dctx.decrypt_block(s) for s in lines)
+
+    def __enter__(self):
+        self._stream.__enter__()
+        return self
+
+    def __exit__(self, type, value, traceback) -> None:
+        self._stream.__exit__(type, value, traceback)

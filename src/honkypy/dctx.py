@@ -363,10 +363,10 @@ def setup_v3(
         enforce_ns_v3 (bool, optional): Perform strict name-sum checking in V3 header. Defaults to True.
 
     Raises:
-        VersionOutOfRange: _description_
-        VersionUnsupported: _description_
-        KeyTablesMissingError: _description_
-        VersionOutOfRange: _description_
+        VersionOutOfRange: When version is 0 (when encrypting) or less than 0.
+        VersionUnsupported: When the header needs newer decryption version that HonkyPy doesn't support.
+        KeyTablesMissingError: When V3 decryption is used but no key tables is present.
+        NameSumMismatchError: When name-sum mismatch is detected in V3 header when decrypting.
 
     Returns:
         _type_: _description_
