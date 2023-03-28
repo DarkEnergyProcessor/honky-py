@@ -375,12 +375,12 @@ def setup_v3(
     header_ns = None
     if header_test is not None:
         _test_v3(header_test, digest)
-        flip_v3 = header_test[7] == 1
         if version <= 0:
             if header_test[7] < 2:
                 version = 3
+                flip_v3 = header_test[7] == 1
                 header_ns = (header_test[10] << 8) | header_test[11]
-            if header_test[7] == 2:
+            elif header_test[7] == 2:
                 version = 4
                 lcg_key_v4 = header_test[6]
             else:
