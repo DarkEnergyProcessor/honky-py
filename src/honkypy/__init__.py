@@ -194,8 +194,10 @@ def encrypt_setup_by_gametype(
     Returns:
         DecrypterContext: Newly decrypter context.
     """
+    gametype_cf = gametype.casefold()
+
     for gt, prefix, key_tables in _COMBINATION:
-        if gametype == gt:
+        if gametype_cf == gt.casefold():
             return encrypt_setup(
                 prefix, filename, version, v3_flip_key=v3_flip_key, v3_key_tables=key_tables, v4_lcg_index=v4_lcg_index
             )
