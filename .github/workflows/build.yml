@@ -6,11 +6,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Setup Python 3.10
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10' 
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Prepare venv
       run: python -m venv venv
     - name: Install venv Dependencies
@@ -18,7 +18,7 @@ jobs:
     - name: Build Package
       run: venv/bin/python -m build
     - name: Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: honkypy-dist
         path: dist/
