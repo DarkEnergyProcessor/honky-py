@@ -54,9 +54,9 @@ _COMBINATION: list[tuple[_ValidGametypes, bytes, list[int]]] = [
     ("CN", NAME_PREFIX_CN, KEY_TABLES_CN),
 ]
 
-_GAME_VERSIONS: list[type[_SupportsDctxType]] = [Version1Context, Version2Context, setup_v3, setup_v3]
+_GAME_VERSIONS: list[_SupportsDctxType] = [Version1Context, Version2Context, setup_v3, setup_v3]
 
-_GAME_VERSIONS_PROBE: list[type[_SupportsDctxType]] = [Version2Context, setup_v3, setup_v3]
+_GAME_VERSIONS_PROBE: list[_SupportsDctxType] = [Version2Context, setup_v3, setup_v3]
 
 
 def decrypt_setup_probe(
@@ -116,7 +116,7 @@ def decrypt_setup(
     if version == 0:
         for context_class in _GAME_VERSIONS_PROBE:
             try:
-                dctx = cast(DecrypterContext, context_class(prefix, filename, key_tables, header))
+                dctx = context_class(prefix, filename, key_tables, header)
                 return dctx
             except ValueError:
                 pass
