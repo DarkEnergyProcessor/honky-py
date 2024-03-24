@@ -27,6 +27,7 @@ This module provides "a certain idol rhythm game" file encryption and decryption
 routines written in pure Python.
 """
 
+import collections.abc
 import io
 
 from .dctx import DecrypterContext, Version1Context, Version2Context, setup_v3
@@ -283,7 +284,7 @@ class StreamIOWrapper(IO[bytes]):
     def write(self, s: bytes) -> int:
         return self._stream.write(self._dctx.decrypt_block(s))
 
-    def writelines(self, lines: list[bytes]) -> None:
+    def writelines(self, lines: collections.abc.Iterable[bytes]) -> None:
         self._stream.writelines(self._dctx.decrypt_block(s) for s in lines)
 
     def __enter__(self):
@@ -292,3 +293,9 @@ class StreamIOWrapper(IO[bytes]):
 
     def __exit__(self, type, value, traceback) -> None:
         self._stream.__exit__(type, value, traceback)
+
+    def __iter__(self) -> collections.abc.Iterator[bytes]:
+        return self._stream.__iter__()
+
+    def __next__(self) -> bytes:
+        return self._stream.__next__()
